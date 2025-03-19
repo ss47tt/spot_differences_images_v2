@@ -25,7 +25,7 @@ class ImageDataset(Dataset):
         if self.transform:
             image = self.transform(image)
         
-        return image
+        return image, os.path.basename(img_path)  # Also return the filename
 
 # VAE Model
 class VAE(nn.Module):
@@ -110,47 +110,47 @@ transform = transforms.Compose([
 def find_anomalous_regions(model, dataloader):
     model.eval()
     with torch.no_grad():
-        for idx, img in enumerate(dataloader):
+        for img, filename in dataloader:  # Unpack filename
             img = img.to(device)
             recon, mu, logvar = model(img)
 
-            # Calculate pixel-wise reconstruction error
+            # Compute reconstruction error
             recon_error = nn.functional.mse_loss(recon.view(-1, 3 * 640 * 640), 
                                                  img.view(-1, 3 * 640 * 640), reduction='none')
-            recon_error = recon_error.view(img.shape[0], 3, 640, 640).mean(dim=1)  # Average across color channels
+            recon_error = recon_error.view(img.shape[0], 3, 640, 640).mean(dim=1)
 
-            # Visualize the anomaly heatmap
-            visualize_anomalies(img[0], recon[0], recon_error[0], idx)
+            # Visualize anomalies using the original filename
+            visualize_anomalies(img[0], recon[0], recon_error[0], filename[0])
 
 # Updated visualization function to show anomaly scores with a heatmap
-def visualize_anomalies(original_img, reconstructed_img, recon_error, idx):
-    # Convert tensors to numpy arrays for visualization
+def visualize_anomalies(original_img, reconstructed_img, recon_error, filename):
+    # Convert tensors to numpy arrays
     original_img = original_img.cpu().numpy().transpose(1, 2, 0)
     reconstructed_img = reconstructed_img.cpu().numpy().transpose(1, 2, 0)
-    recon_error = recon_error.cpu().numpy()  # Grayscale anomaly score map
+    recon_error = recon_error.cpu().numpy()
 
-    # Normalize error map for visualization
+    # Normalize error map
     error_map = (recon_error - recon_error.min()) / (recon_error.max() - recon_error.min())
 
-    # Convert grayscale error map to a heatmap
-    heatmap = cv2.applyColorMap((error_map * 255).astype(np.uint8), cv2.COLORMAP_TURBO)  # Try TURBO instead
-    heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)  # Convert to RGB format
+    # Apply heatmap
+    heatmap = cv2.applyColorMap((error_map * 255).astype(np.uint8), cv2.COLORMAP_TURBO)
+    heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
 
-    # Overlay the heatmap onto the original image
-    alpha = 0.5  # Transparency factor
+    # Overlay heatmap on original image
+    alpha = 0.5
     anomaly_overlay = (1 - alpha) * original_img + alpha * (heatmap / 255.0)
-    anomaly_overlay = np.clip(anomaly_overlay, 0, 1)  # Ensure values are in the correct range
+    anomaly_overlay = np.clip(anomaly_overlay, 0, 1)
 
-    # Save the heatmap image
+    # Save the heatmap image with the original filename
     masked_images_path = "masked_v2"
-    masked_image_path = os.path.join(masked_images_path, f"masked_image_{idx}.png")
     if not os.path.exists(masked_images_path):
         os.makedirs(masked_images_path)
+
+    masked_image_path = os.path.join(masked_images_path, filename)  # Use original filename
     plt.imsave(masked_image_path, np.clip(anomaly_overlay, 0, 1))
 
     # Plot results
     fig, ax = plt.subplots(1, 3, figsize=(15, 5))
-
     ax[0].imshow(original_img)
     ax[0].set_title("Original Image")
     ax[0].axis('off')
